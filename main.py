@@ -15,7 +15,6 @@ def home():
     return "Combo Bot is Alive!"
 
 def run():
-    # RenderのPORT環境変数に対応
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
@@ -32,27 +31,24 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 class ComboMakerView(discord.ui.View):
     def __init__(self, memo: str = None):
         super().__init__(timeout=180)
-        self.combo_parts = [] # 組み立てるコンボのパーツ配列
-        self.memo = memo      # コンボ名（メモ）を保持
+        self.combo_parts = [] 
+        self.memo = memo      
 
     def get_combo_string(self):
         return " ＞ ".join(self.combo_parts)
 
-    async def update_message(self, interaction: discord.Interaction):
-        current_str = self.get_combo_string()
-        memo_line = f"**コンボ名:** {self.memo}\n" if self.memo else ""
-        
-        if not current_str:
-            await interaction.response.edit_message(content=f"**[起動ユーザー限定]**\n{memo_line}ボタンを押してコンボを作ってね！", view=self)
-        else:
-            await interaction.response.edit_message(content=f"**[起動ユーザー限定]**\n{memo_line}**現在のコンボプレビュー:**\n`{current_str}`", view=self)
-
+    # 【爆速コア処理】Discordに「ボタン受け取ったよ」と0秒で返しつつ、履歴を追記する
     async def add_part(self, interaction: discord.Interaction, text: str):
         self.combo_parts.append(text)
-        await self.update_message(interaction)
+        
+        # 1. まずDiscord側に「ボタン押下を検知した」と一瞬で応答（これでボタンの砂時計が消える）
+        await interaction.response.defer(ephemeral=True)
+        
+        # 2. 本人にだけ、入力した履歴を光速でチャット欄に追記（これが体感ラグ0秒の秘密）
+        await interaction.followup.send(f"➡️ **{text}** を入力中...", ephemeral=True)
 
     # ------------------------------------------
-    # 3. 5行×5個のボタン配置（rowで指定）
+    # 3. 5行×5個のボタン配置
     # ------------------------------------------
     
     # 1行目：移動コマンド (row=0)
@@ -106,13 +102,16 @@ class ComboMakerView(discord.ui.View):
     # 5行目：システム制御 (row=4)
     @discord.ui.button(label="一手戻る", style=discord.ButtonStyle.danger, row=4)
     async def undo(self, interaction: discord.Interaction, btn: discord.ui.Button):
-        if self.combo_parts: self.combo_parts.pop()
-        await self.update_message(interaction)
+        if self.combo_parts: 
+            removed = self.combo_parts.pop()
+            await interaction.response.defer(ephemeral=True)
+            await interaction.followup.send(f"❌ 「{removed}」を取り消しました", ephemeral=True)
 
     @discord.ui.button(label="クリア", style=discord.ButtonStyle.danger, row=4)
     async def clear(self, interaction: discord.Interaction, btn: discord.ui.Button):
         self.combo_parts.clear()
-        await self.update_message(interaction)
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send("🧹 入力をすべてクリアしました", ephemeral=True)
 
     @discord.ui.button(label="送信", style=discord.ButtonStyle.success, row=4)
     async def submit(self, interaction: discord.Interaction, btn: discord.ui.Button):
@@ -122,14 +121,14 @@ class ComboMakerView(discord.ui.View):
             return
         
         user_name = interaction.user.display_name
-        # 自分のエフェメラル画面のボタンを片付ける
+        # 元のボタン画面を片付ける
         await interaction.response.edit_message(content="コンボを送信しました！", view=None)
         
-        # 全体チャットへ投稿するメッセージの組み立て
+        # 全体チャットへ綺麗なコンボをドンと投稿
         output_msg = f"**📢 {user_name} のコンボ投稿:**\n"
         if self.memo:
             output_msg += f"[コンボ名: {self.memo}]\n"
-        output_msg += f"{current_str}"
+        output_msg += f"`{current_str}`"
         
         await interaction.channel.send(output_msg)
         self.stop()
@@ -142,22 +141,17 @@ async def on_ready():
     print(f'Logged in as {bot.user.name}')
     await bot.tree.sync()
 
-# スラッシュコマンド：コンボ名（メモ）の初期値を完全に排除
 @bot.tree.command(name="combo-maker", description="スト6用コンボメーカーを起動します")
 @app_commands.describe(memo="コンボ名や状況のメモ（例：使いやすいやつ、画面端限定 など）")
 async def combo_maker(interaction: discord.Interaction, memo: str = None):
     view = ComboMakerView(memo=memo)
-    
     memo_line = f"**コンボ名:** {memo}\n" if memo else ""
     await interaction.response.send_message(
-        content=f"**[起動ユーザー限定]**\n{memo_line}ボタンを押してコンボを作ってね！", 
+        content=f"**[起動ユーザー限定]**\n{memo_line}ボタンをリズムよく押してコンボを作ってね！最後に「送信」で全体に流れます。", 
         view=view, 
         ephemeral=True
     )
 
-# Render常時起動用のトリガー
 keep_alive()
-
-# トークン取得
 TOKEN = os.environ.get("DISCORD_TOKEN", "YOUR_BOT_TOKEN_HERE")
 bot.run(TOKEN)
