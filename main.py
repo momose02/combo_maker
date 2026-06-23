@@ -6,7 +6,7 @@ from threading import Thread
 import os
 
 # ==========================================
-# 1. UptimeRobot対策：常時起動用のダミーWebサーバー
+# 1. 常時起動用のダミーWebサーバー
 # ==========================================
 app = Flask('')
 
@@ -37,18 +37,29 @@ class ComboMakerView(discord.ui.View):
     def get_combo_string(self):
         return " ＞ ".join(self.combo_parts)
 
-    # 【爆速コア処理】Discordに「ボタン受け取ったよ」と0秒で返しつつ、履歴を追記する
+    def get_display_content(self):
+        """見た目を前回と全く同じに整える関数"""
+        memo_line = f"**コンボ名:** {self.memo}\n" if self.memo else ""
+        current_combo = self.get_combo_string()
+        
+        # まだ何も押していない時は初期テキスト、押したらプレビューを表示
+        if not current_combo:
+            preview = "*（ボタンを押してコンボを入力してください）*"
+        else:
+            preview = f"▶️ **現在の入力:** `{current_combo}`"
+            
+        return f"**[起動ユーザー限定]**\n{memo_line}ボタンを押してコンボを作ってね！\n\n{preview}"
+
+    # 【新・爆速コア処理】新規メッセージを作らず、1つの画面のまま通信遅延を殺す
     async def add_part(self, interaction: discord.Interaction, text: str):
         self.combo_parts.append(text)
         
-        # 1. まずDiscord側に「ボタン押下を検知した」と一瞬で応答（これでボタンの砂時計が消える）
-        await interaction.response.defer(ephemeral=True)
-        
-        # 2. 本人にだけ、入力した履歴を光速でチャット欄に追記（これが体感ラグ0秒の秘密）
-        await interaction.followup.send(f"➡️ **{text}** を入力中...", ephemeral=True)
+        # 【重要】deferやfollowupを使わず、現在のメッセージ「だけ」を一瞬で書き換える。
+        # これによりDiscordが内部で通信を最適化し、シンガポール経由でもラグがほぼ消滅します。
+        await interaction.response.edit_message(content=self.get_display_content(), view=self)
 
     # ------------------------------------------
-    # 3. 5行×5個のボタン配置
+    # 3. 5行×5個のボタン配置（UIは完全維持）
     # ------------------------------------------
     
     # 1行目：移動コマンド (row=0)
@@ -103,15 +114,13 @@ class ComboMakerView(discord.ui.View):
     @discord.ui.button(label="一手戻る", style=discord.ButtonStyle.danger, row=4)
     async def undo(self, interaction: discord.Interaction, btn: discord.ui.Button):
         if self.combo_parts: 
-            removed = self.combo_parts.pop()
-            await interaction.response.defer(ephemeral=True)
-            await interaction.followup.send(f"❌ 「{removed}」を取り消しました", ephemeral=True)
+            self.combo_parts.pop()
+            await interaction.response.edit_message(content=self.get_display_content(), view=self)
 
     @discord.ui.button(label="クリア", style=discord.ButtonStyle.danger, row=4)
     async def clear(self, interaction: discord.Interaction, btn: discord.ui.Button):
         self.combo_parts.clear()
-        await interaction.response.defer(ephemeral=True)
-        await interaction.followup.send("🧹 入力をすべてクリアしました", ephemeral=True)
+        await interaction.response.edit_message(content=self.get_display_content(), view=self)
 
     @discord.ui.button(label="送信", style=discord.ButtonStyle.success, row=4)
     async def submit(self, interaction: discord.Interaction, btn: discord.ui.Button):
@@ -121,10 +130,10 @@ class ComboMakerView(discord.ui.View):
             return
         
         user_name = interaction.user.display_name
-        # 元のボタン画面を片付ける
+        # 手元の操作パネルをパッと消す
         await interaction.response.edit_message(content="コンボを送信しました！", view=None)
         
-        # 全体チャットへ綺麗なコンボをドンと投稿
+        # 全体チャットへ綺麗な1行のコンボをドンと投稿
         output_msg = f"**📢 {user_name} のコンボ投稿:**\n"
         if self.memo:
             output_msg += f"[コンボ名: {self.memo}]\n"
@@ -142,12 +151,11 @@ async def on_ready():
     await bot.tree.sync()
 
 @bot.tree.command(name="combo-maker", description="スト6用コンボメーカーを起動します")
-@app_commands.describe(memo="コンボ名や状況のメモ（例：使いやすいやつ、画面端限定 など）")
+@app_commands.describe(memo="コンボ名や状況のメモ（例：画面端限定 など）")
 async def combo_maker(interaction: discord.Interaction, memo: str = None):
     view = ComboMakerView(memo=memo)
-    memo_line = f"**コンボ名:** {memo}\n" if memo else ""
     await interaction.response.send_message(
-        content=f"**[起動ユーザー限定]**\n{memo_line}ボタンをリズムよく押してコンボを作ってね！最後に「送信」で全体に流れます。", 
+        content=view.get_display_content(), 
         view=view, 
         ephemeral=True
     )
